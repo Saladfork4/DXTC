@@ -11,10 +11,9 @@
 
 @interface HighColor : NSObject
 
-@property (readonly) uint16_t color;
-@property (readonly) uint8_t r5;
-@property (readonly) uint8_t g6;
-@property (readonly) uint8_t b5;
+@property (readonly) uint8_t r8;
+@property (readonly) uint8_t g8;
+@property (readonly) uint8_t b8;
 
 /**
  *  Initializes a high-color (16-bit) instance.
@@ -24,18 +23,6 @@
  *  - returns:  HighColor object.
  */
 -(nonnull id)initWithColor:(uint16_t)color;
-
-
-/**
- *  Returns the true-color (32-bit) equivalent of the stored color.
- *
- *  - parameter alpha:      High-color does not store alpha. This field allows
- *                          you to specify a custom alpha.
- *
- *  - returns:  32-bit RGBA integer.
- */
--(uint32_t)trueColor:(uint8_t)alpha;
-
 
 /**
  *  Returns a NSColor using calibrated hues.
@@ -51,28 +38,6 @@
  *
  */
 -(nonnull NSColor*)calibratedColor:(uint8_t)alpha gammaCorrection:(CGFloat)power;
-
-
-/**
- *  Scales the color by a float and returns a new instance.
- *
- *  - parameter factor:     Scale-factor. This is done per-component, not on the
- *                          color itself. For example, a factor of '2' would scale
- *                          the red, green, and blue components by '2' respectively.
- *
- *  - returns: A new HighColor instance.
- */
--(nonnull id)scale:(CGFloat)factor;
-
-
-/**
- *  Adds two HighColor objects and returns a new instance.
- *
- *  - parameter color:      The other color. Addition is done per-component.
- *
- *  - returns: A new HighColor instance.
- */
--(nonnull id)add:(nonnull HighColor*)color;
 
 
 /**

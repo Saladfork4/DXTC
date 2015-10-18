@@ -18,13 +18,13 @@
 /* OS X specific value */
 #define DXTC_GAMMA_CORRECTION   1.2f
 
-typedef struct _DXT1Block {
+typedef struct _DXTColorBlock {
     uint8_t colorLow0;
     uint8_t colorHigh0;
     uint8_t colorLow1;
     uint8_t colorHigh1;
     uint8_t codes[4];
-} DXT1Block;
+} DXTColorBlock;
 
 typedef struct _DXT3AlphaBlock {
     uint16_t alpha[4];

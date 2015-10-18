@@ -17,79 +17,64 @@
         16-bit color is stored in a 5:6:5 RGB format:
         RRRR RGGG GGGB BBBB
      
-        Use masks to extract bits:
-        r 0xF800 -> 1111 1000 0000 0000
-        g 0x07E0 -> 0000 0111 1110 0000
-        b 0x001F -> 0000 0000 0001 1111
+        r -> 1111 1000 0000 0000
+        g -> 0000 0111 1110 0000
+        b -> 0000 0000 0001 1111
      
-        Shift red 11 bits to the right.
-        Shift green 5 bits to the right.
+        Shift red 11 bits to the right, mask 5 bits.
+        Shift green 5 bits to the right, mask 6 bits.
+        Blue does not need a shift, just mask 5 bits.
      */
-    _color = color;
-    _r5 = (color & 0xF800) >> 11;
-    _g6 = (color & 0x07E0) >> 5;
-    _b5 = (color & 0x001F);
+    uint8_t r5 = (color >> 11) & 0x1F;
+    uint8_t g6 = (color >> 5) & 0x3F;
+    uint8_t b5 = color & 0x1F;
+    
+    _r8 = (r5 << 3) | (r5 >> 2);
+    _g8 = (g6 << 2) | (g6 >> 4);
+    _b8 = (b5 << 3) | (b5 >> 2);
+    
+    return self;
+}
+
+-(id)initWithTrueColor:(uint32_t)color {
+    self = [super init];
+    
+    _r8 = (color >> 24) & 0xFF;
+    _g8 = (color >> 16) & 0xFF;
+    _b8 = (color >> 8) & 0xFF;
     
     return self;
 }
 
 -(uint32_t)trueColor:(uint8_t)alpha {
-    /*
-        The 5-bit and 6-bit components must be
-        transformed to the 8-bit scale. These
-        transformations were taken from an anonymous
-        stackoverflow user. :)
-     */
-    uint8_t r = (_r5 * 527 + 23) >> 6;
-    uint8_t g = (_g6 * 259 + 33) >> 6;
-    uint8_t b = (_b5 * 527 + 23) >> 6;
-    
-    return (r << 24) | (g << 16) | (b << 8) | alpha;
+    return (_r8 << 24) | (_g8 << 16) | (_b8 << 8) | alpha;
 }
 
 -(NSColor*)calibratedColor:(uint8_t)alpha gammaCorrection:(CGFloat)power {
-    CGFloat red   = powf(_r5/32.0, power);
-    CGFloat green = powf(_g6/64.0, power);
-    CGFloat blue  = powf(_b5/32.0, power);
-    CGFloat alph  = powf(alpha/255.0, power);
+    CGFloat red   = pow(_r8/255.0, power);
+    CGFloat green = pow(_g8/255.0, power);
+    CGFloat blue  = pow(_b8/255.0, power);
+    CGFloat alph  = alpha/255.0f;
     
     return [NSColor colorWithCalibratedRed:red green:green blue:blue alpha:alph];
 }
 
--(id)scale:(CGFloat)factor {
-    /*
-        All we are doing is multiplying each component by
-        the scaling factor and casting it back to an int.
-        The MIN and MAX constrain the 5-bit values to [0, 32]
-        and the 6-bit values to [0, 64].
-     */
-    uint8_t r = (uint8_t) (MIN(MAX((CGFloat)_r5 * factor, 0), 32));
-    uint8_t g = (uint8_t) (MIN(MAX((CGFloat)_g6 * factor, 0), 64));
-    uint8_t b = (uint8_t) (MIN(MAX((CGFloat)_b5 * factor, 0), 32));
-    uint16_t result = ((uint16_t)r << 11) | ((uint16_t)g << 5) | b;
-    
-    return [[HighColor alloc] initWithColor:result];
-}
-
--(id)add:(HighColor*)color {
-    uint8_t r = _r5 + [color r5];
-    uint8_t g = _g6 + [color g6];
-    uint8_t b = _b5 + [color b5];
-    uint16_t result = ((uint16_t)r << 11) | ((uint16_t)g << 5) | b;
-    
-    return [[HighColor alloc] initWithColor:result];
-}
-
 -(id)linearBlend:(HighColor*)otherColor {
-    HighColor *c0 = [self scale:0.5f];
-    HighColor *c1 = [otherColor scale:0.5f];
-    return [c0 add:c1];
+    uint8_t r = (uint8_t) ((self.r8 + otherColor.r8)/2);
+    uint8_t g = (uint8_t) ((self.g8 + otherColor.g8)/2);
+    uint8_t b = (uint8_t) ((self.b8 + otherColor.b8)/2);
+    uint32_t rgb = (r << 24) | (g << 16) | (b << 8);
+    
+    return [[HighColor alloc] initWithTrueColor:rgb];
 }
 
 -(id)linearInterpolation:(HighColor*)otherColor {
-    HighColor *c0 = [self scale:(2.0f/3.0f)];
-    HighColor *c1 = [otherColor scale:(1.0f/3.0f)];
-    return [c0 add:c1];
+    uint8_t r = (uint8_t) ((self.r8*2 + otherColor.r8)/3);
+    uint8_t g = (uint8_t) ((self.g8*2 + otherColor.g8)/3);
+    uint8_t b = (uint8_t) ((self.b8*2 + otherColor.b8)/3);
+    uint32_t rgb = (r << 24) | (g << 16) | (b << 8);
+    
+    return [[HighColor alloc] initWithTrueColor:rgb];
 }
 
 @end
