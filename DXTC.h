@@ -26,6 +26,16 @@ typedef struct _DXT1Block {
     uint8_t codes[4];
 } DXT1Block;
 
+typedef struct _DXT3AlphaBlock {
+    uint16_t alpha[4];
+} DXT3AlphaBlock;
+
+typedef struct _DXT5AlphaBlock {
+    uint8_t alpha0;
+    uint8_t alpha1;
+    uint8_t codes[6];
+} DXT5AlphaBlock;
+
 @interface DXTC : NSObject
 
 /**
