@@ -10,7 +10,30 @@
 
 @implementation DXTC
 
-+(NSArray*)decompressColorBlock:(DXTColorBlock)block DXT1:(BOOL)DXT1 {
+/**
+    :: DXT Color Block ::
+ 
+    DXT1/3/5 all feature 64-bit color block chunks. The parsing is mostly
+    the same between the formats, with some subtle differences for DXT1.
+ 
+    The first 32-bits store two colors in High-Color 5:6:5 RGB format.
+    The low-byte is stored before the high-byte, so you must do some
+    shifting to get the 16-bit colors c0 and c1.
+ 
+    DXT1: If c0 > c1, then interpolate between the two colors to form
+          additional colors c2 and c3.
+ 
+          If c0 <= c1, then c2 is the linear blend of c0 and c1, and
+          c3 is set to black. If the format specifies an alpha, then
+          c3 should be transparent black (all zeroes).
+ 
+    DXT3 and DXT5: Always interpolate c0 and c1 to form c2 and c3.
+ 
+    The last 32-bits store sixteen 2-bit indices => one for each pixel.
+    For example, if the index for a pixel is '3', then that pixel
+    should use the color stored in c3.
+ */
++(NSArray*)decompressColorBlock:(DXTColorBlock)block DXT1:(BOOL)DXT1 DXT1A:(BOOL)DXT1A {
     NSMutableArray *results = [[NSMutableArray alloc] initWithCapacity:16];
     
     HighColor *colors[4];
@@ -28,10 +51,11 @@
         colors[3] = [[HighColor alloc] initWithColor:0];
     }
     
-    for (int k = 0; k < 4; k++) {
-        for (int j = 0; j < 4; j++) {
-            int idx = (block.codes[j] >> (k*2)) & 0x3;
-            NSColor *color = [colors[idx] calibratedColor:255 gammaCorrection:DXTC_GAMMA_CORRECTION];
+    for (int x = 0; x < 4; x++) {
+        for (int y = 0; y < 4; y++) {
+            int idx = (block.codes[x] >> y*2) & 0x3;
+            int alpha = (DXT1A && idx == 3 && c0 <= c1) ? 0 : 255;
+            NSColor *color = [colors[idx] calibratedColor:alpha gammaCorrection:DXTC_GAMMA_CORRECTION];
             [results addObject:color];
         }
     }
@@ -65,49 +89,18 @@
  */
 +(NSBitmapImageRep*)decompressDXT1:(NSData*)source bitmap:(NSBitmapImageRep*)bitmap
                              width:(uint32_t)width height:(uint32_t)height alpha:(BOOL)alpha {
-    
-    int x = 0; int y = 0;
-    int end = (int)[source length];
-    
     DXTColorBlock block;
-    HighColor *colors[4];
+    int x = 0; int y = 0;
     
-    for (int offset = 0; offset < end; offset += 8) {
+    for (int offset = 0; offset < [source length]; offset += 8) {
         [source getBytes:&block range:NSMakeRange(offset, 8)];
         
-        uint16_t c0 = ((uint16_t)block.colorHigh0 << 8) + block.colorLow0;
-        uint16_t c1 = ((uint16_t)block.colorHigh1 << 8) + block.colorLow1;
-        
-        colors[0] = [[HighColor alloc] initWithColor:c0];
-        colors[1] = [[HighColor alloc] initWithColor:c1];
-        
-        if (c0 > c1) {
-            colors[2] = [colors[0] linearInterpolation:colors[1]];
-            colors[3] = [colors[1] linearInterpolation:colors[0]];
-        } else {
-            colors[2] = [colors[0] linearBlend:colors[1]];
-            colors[3] = [[HighColor alloc] initWithColor:0];
-        }
-        
-        /*
-            To extract indices from the look-up table, we need a mask.
-            
-            start -> 0000 0011
-                     0000 1100
-                     0011 0000
-            end   -> 1100 0000
-         
-            We apply the mask to each of the 4 code-tables in the data block.
-         */
-        int mask = 0x3;
-        for (int k = 0; k < 4; k++) {
+        /* Load and set pixel colors */
+        NSArray *colors = [DXTC decompressColorBlock:block DXT1:YES DXT1A:alpha];
+        for (int i = 0; i < 4; i++) {
             for (int j = 0; j < 4; j++) {
-                int index = (block.codes[j] & mask) >> (k*2);
-                uint8_t a = (alpha && c0 <= c1) ? 0 : 255;
-                NSColor *ns = [colors[index] calibratedColor:a gammaCorrection:DXTC_GAMMA_CORRECTION];
-                [bitmap setColor:ns atX:(x + k) y:(y + j)];
+                [bitmap setColor:colors[i*4 + j] atX:x + j y:y + i];
             }
-            mask = mask << 2;
         }
         
         x += 4;
@@ -125,7 +118,7 @@
  
     DXT3 is essentially DXT1 with alpha and some subtle differences:
  
-    (1) Data is processed in 128-bit chunks. The first 64-bits are alpha data.
+    (1) Data is processed in 128-bit chunks. The first 64-bits is alpha data.
         Each 4-bit entry corresponds to one pixel's alpha value.
     (2) The second 64-bits are handled exactly the same way as DXT1, except that
         you'll always use the linear interpolation rule (to form c2 and c3) rather
@@ -133,37 +126,23 @@
  */
 +(NSBitmapImageRep*)decompressDXT3:(NSData*)source bitmap:(NSBitmapImageRep*)bitmap
                              width:(uint32_t)width height:(uint32_t)height {
-    int x = 0; int y = 0;
-    int end = (int)[source length];
-    
     DXTColorBlock  block;
-    DXT3AlphaBlock alpha;
-    HighColor *colors[4];
+    DXT3AlphaBlock alphaBlock;
+    int x = 0; int y = 0;
     
-    for (int offset = 0; offset < end; offset += 16) {
-        [source getBytes:&alpha range:NSMakeRange(offset, 8)];
+    for (int offset = 0; offset < [source length]; offset += 16) {
+        [source getBytes:&alphaBlock range:NSMakeRange(offset, 8)];
         [source getBytes:&block range:NSMakeRange(offset + 8, 8)];
         
-        uint16_t c0 = ((uint16_t)block.colorHigh0 << 8) + block.colorLow0;
-        uint16_t c1 = ((uint16_t)block.colorHigh1 << 8) + block.colorLow1;
-        
-        colors[0] = [[HighColor alloc] initWithColor:c0];
-        colors[1] = [[HighColor alloc] initWithColor:c1];
-        colors[2] = [colors[0] linearInterpolation:colors[1]];
-        colors[3] = [colors[1] linearInterpolation:colors[0]];
-        
-        int mask  = 0x3;
-        int amask = 0xF;
-        for (int k = 0; k < 4; k++) {
+        /* Load and set pixel colors */
+        NSArray *colors = [DXTC decompressColorBlock:block DXT1:NO DXT1A:NO];
+        for (int i = 0; i < 4; i++) {
             for (int j = 0; j < 4; j++) {
-                uint32_t a = (alpha.alpha[j] & amask) >> (k*4);
-                a = (uint32_t) (255.0f/15 * a);
-                int index  = (block.codes[j] & mask) >> (k*2);
-                NSColor *ns = [colors[index] calibratedColor:a gammaCorrection:DXTC_GAMMA_CORRECTION];
-                [bitmap setColor:ns atX:(x + k) y:(y + j)];
+                uint32_t a = (alphaBlock.alpha[i] >> (j*4)) & 0xF;
+                a = (a << 4) | (a);
+                NSColor *color = [(NSColor*)colors[i*4 + j] colorWithAlphaComponent:a/255.0];
+                [bitmap setColor:color atX:x + j y:y + i];
             }
-            mask = mask << 2;
-            amask = amask << 4;
         }
         
         x += 4;
@@ -176,72 +155,76 @@
     return bitmap;
 }
 
+/**
+    :: DXT5 ::
+ 
+    DXT5 is similar to DXT3 in that it contains a 64-bit alpha chunk before each
+    color chunk, but its alpha chunk is encoded with a look-up table similar to
+    the method described in DXT1.
+ 
+    The alpha chunk starts off with two 8-bit alpha colors a0 and a1.
+    You can compute 5 other alpha colors using the method described here:
+    https://www.opengl.org/wiki/S3_Texture_Compression#DXT5_Format
+ 
+    The next 48-bits feature 3-bit indices that assign a particular alpha
+    value to that pixel. For example, an index of 7 would indicate a7.
+ 
+    48-bits and 3-bits are rather awkward to parse. My DXT5AlphaBlock grabs
+    it as six 8-bit unsigned integers. The first three 8-bit integers are
+    packed into one integer (32-bit) and the second three are packed into another.
+    This allows you to loop and mask really easily. You could alternatively pack 
+    them into a 64-bit integer. Either is fine.
+    
+    The 3 least-significant-bits of the first byte (8-bit) corresponds to the
+    first pixel (0, 0) => upper-left corner pixel.
+ */
 +(NSBitmapImageRep*)decompressDXT5:(NSData*)source bitmap:(NSBitmapImageRep*)bitmap
                              width:(uint32_t)width height:(uint32_t)height {
-    int x = 0; int y = 0;
-    int end = (int)[source length];
-    
     DXTColorBlock  block;
-    uint64_t  alphaBlock;
-    HighColor *colors[4];
-    uint32_t alphas[8];
+    DXT5AlphaBlock alphaBlock;
+    int x = 0; int y = 0;
     
-    DXT5AlphaBlock ab;
+    int pixelAlpha[16];
+    int alphas[8];
     
-    for (int offset = 0; offset < end; offset += 16) {
+    for (int offset = 0; offset < [source length]; offset += 16) {
         [source getBytes:&alphaBlock range:NSMakeRange(offset, 8)];
-        [source getBytes:&ab range:NSMakeRange(offset, 8)];
         [source getBytes:&block range:NSMakeRange(offset + 8, 8)];
         
-        uint16_t c0 = ((uint16_t)block.colorHigh0 << 8) + block.colorLow0;
-        uint16_t c1 = ((uint16_t)block.colorHigh1 << 8) + block.colorLow1;
+        alphas[0] = alphaBlock.alpha0;
+        alphas[1] = alphaBlock.alpha1;
         
-        colors[0] = [[HighColor alloc] initWithColor:c0];
-        colors[1] = [[HighColor alloc] initWithColor:c1];
-        colors[2] = [colors[0] linearInterpolation:colors[1]];
-        colors[3] = [colors[1] linearInterpolation:colors[0]];
-        
-        uint8_t pixelAlpha[16];
-        alphas[0] = ab.alpha0;
-        alphas[1] = ab.alpha1;
-        
-        
+        /* Determine alpha computation method */
         if (alphas[0] > alphas[1]) {
-            for (int j = 1; j < 7; j++) {
-                int sum = (7 - j)*alphas[0] + j*alphas[1];
-                alphas[j + 1] = sum/7;
-            }
+            for (int i = 0; i < 6; i++)
+                alphas[i + 2] = ((6 - i)*alphas[0] + (i + 1)*alphas[1])/7;
         } else {
-            for (int j = 1; j < 5; j++) {
-                int sum = (5 - j)*alphas[0] + j*alphas[1];
-                alphas[j + 1] = sum/5;
-            }
+            for (int i = 0; i < 4; i++)
+                alphas[i + 2] = ((4 - i)*alphas[0] + (i + 1)*alphas[1])/5;
             alphas[6] = 0;
             alphas[7] = 255;
         }
         
-        int value1 = ab.codes[0] | (ab.codes[1] << 8) | (ab.codes[2] << 16);
-        int value2 = ab.codes[3] | (ab.codes[4] << 8) | (ab.codes[5] << 16);
-        int alphaIndices[16];
+        /* Pack the 8-bit codes into 24-bits */
+        int alphaPack0 = alphaBlock.codes[0] | (alphaBlock.codes[1] << 8) | (alphaBlock.codes[2] << 16);
+        int alphaPack1 = alphaBlock.codes[3] | (alphaBlock.codes[4] << 8) | (alphaBlock.codes[5] << 16);
         
+        /* Extract 3-bits at a time */
         for (int i = 0; i < 8; i++) {
-            alphaIndices[i] = (value1 >> 3*i) & 0x7;
-            alphaIndices[i + 8] = (value2 >> 3*i) & 0x7;
+            int index0 = (alphaPack0 >> 3*i) & 0x7;
+            int index1 = (alphaPack1 >> 3*i) & 0x7;
+            pixelAlpha[i] = alphas[index0];
+            pixelAlpha[i + 8] = alphas[index1];
         }
         
-        for (int i = 0; i < 16; i++) {
-            pixelAlpha[i] = alphas[alphaIndices[i]];
-        }
-        
-        int mask  = 0x3;
-        for (int k = 0; k < 4; k++) {
+        /* Load and set pixel colors */
+        NSArray *colors = [DXTC decompressColorBlock:block DXT1:NO DXT1A:NO];
+        for (int i = 0; i < 4; i++) {
             for (int j = 0; j < 4; j++) {
-                uint32_t a = pixelAlpha[j*4 + k];
-                int index  = (block.codes[j] & mask) >> (k*2);
-                NSColor *ns = [colors[index] calibratedColor:a gammaCorrection:DXTC_GAMMA_CORRECTION];
-                [bitmap setColor:ns atX:(x + k) y:(y + j)];
+                uint32_t a = pixelAlpha[i*4 + j];
+                NSColor *color = [(NSColor*)colors[i*4 + j] colorWithAlphaComponent:a/255.0];
+                [bitmap setColor:color atX:x + j y:y + i];
             }
-            mask = mask << 2;
         }
         
         x += 4;
@@ -254,6 +237,11 @@
     return bitmap;
 }
 
+/**
+    Chooses which decompression method to use and passes along 
+    bitmap data-planes to fill. The data passed should not contain
+    a header (it should just be the raw image chunk).
+ */
 +(NSBitmapImageRep*)decompress:(NSData*)source
                          width:(uint32_t)w height:(uint32_t)h format:(unsigned int)fmt {
     
