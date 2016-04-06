@@ -16,7 +16,7 @@
 #define DXTC_5    4
 
 /* OS X specific value */
-#define DXTC_GAMMA_CORRECTION   1.2f
+#define DXTC_GAMMA_CORRECTION  1.0f
 
 typedef struct _DXTColorBlock {
     uint8_t colorLow0;

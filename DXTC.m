@@ -259,7 +259,7 @@
                                        samplesPerPixel:4
                                               hasAlpha:YES
                                               isPlanar:NO
-                                        colorSpaceName:NSCalibratedRGBColorSpace
+                                        colorSpaceName:NSDeviceRGBColorSpace
                                           bitmapFormat:NS32BitLittleEndianBitmapFormat | NSAlphaNonpremultipliedBitmapFormat
                                            bytesPerRow:0
                                           bitsPerPixel:32];
